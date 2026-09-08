@@ -1,0 +1,21 @@
+[Unit]
+Description=Spotifyd Spotify Connect daemon
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/root/spotifyd/spotifyd \
+    --no-daemon \
+    --backend alsa \
+    --device hw:0,0 \
+    --device-name "STM32 Spotify" \
+    --device-type speaker \
+    --bitrate 320 \
+    --volume-controller none
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
