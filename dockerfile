@@ -21,6 +21,7 @@ RUN dpkg --add-architecture armhf && \
         ca-certificates \
         file \
         binutils-arm-linux-gnueabihf \
+        libdbus-1-dev:armhf \
         && \
     rm -rf /var/lib/apt/lists/*
 
