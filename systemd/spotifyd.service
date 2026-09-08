@@ -12,7 +12,9 @@ ExecStart=/home/root/spotifyd/spotifyd \
     --device-name "STM32 Spotify" \
     --device-type speaker \
     --bitrate 320 \
-    --volume-controller none
+    --volume-controller none \
+    --use-mpris \
+    --dbus-type system
 
 Restart=on-failure
 RestartSec=5
