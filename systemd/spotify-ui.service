@@ -1,0 +1,20 @@
+# Copy spotify-ui binary to /usr/bin
+
+[Unit]
+Description=Spotify GTK UI
+After=weston-graphical-session.service spotifyd.service
+Requires=weston-graphical-session.service
+Wants=spotifyd.service
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/usr/bin/spotify-ui
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
