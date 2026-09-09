@@ -35,6 +35,8 @@ typedef struct {
     gchar *art_url;
 
     gboolean playing;
+
+    guint reconnect_delay;
 } AppData;
 
 typedef struct {
@@ -72,8 +74,16 @@ static GVariant *get_mpris_property(
             &error
         );
 
+    if (!result) {
+        if (error)
+            g_error_free(error);
+
+        return NULL;
+    }
+
     if (error) {
         g_error_free(error);
+        g_variant_unref(result);
         return NULL;
     }
 
@@ -138,15 +148,67 @@ static void clear_artwork(
     AppData *data
 )
 {
-    if (data->art_image)
+    if (data->art_image) {
         gtk_image_clear(
             GTK_IMAGE(data->art_image)
         );
+
+        gtk_widget_hide(
+            data->art_image
+        );
+    }
 
     if (data->art_placeholder)
         gtk_widget_show(
             data->art_placeholder
         );
+}
+
+
+/* =========================================================
+ * RESET UI
+ *
+ * Used when spotifyd is no longer the active playback
+ * device.
+ * ========================================================= */
+
+static void reset_ui(
+    AppData *data
+)
+{
+    gtk_label_set_text(
+        GTK_LABEL(data->title_label),
+        "Waiting for Spotify..."
+    );
+
+    gtk_label_set_text(
+        GTK_LABEL(data->artist_label),
+        ""
+    );
+
+    gtk_label_set_text(
+        GTK_LABEL(data->status_label),
+        "WAITING FOR SPOTIFY"
+    );
+
+    gtk_progress_bar_set_fraction(
+        GTK_PROGRESS_BAR(data->progress),
+        0.0
+    );
+
+    data->playing = FALSE;
+
+    if (data->play_button)
+        gtk_widget_queue_draw(
+            data->play_button
+        );
+
+    clear_artwork(data);
+
+    g_clear_pointer(
+        &data->art_url,
+        g_free
+    );
 }
 
 
@@ -256,6 +318,11 @@ static gboolean load_artwork(
             square
         );
 
+    if (!cropped) {
+        g_object_unref(original);
+        return FALSE;
+    }
+
     GdkPixbuf *scaled =
         gdk_pixbuf_scale_simple(
             cropped,
@@ -268,9 +335,16 @@ static gboolean load_artwork(
         scaled != NULL;
 
     if (scaled) {
+
         gtk_image_set_from_pixbuf(
             GTK_IMAGE(data->art_image),
             scaled
+        );
+
+        gtk_widget_set_size_request(
+            data->art_image,
+            260,
+            260
         );
 
         gtk_widget_show(
@@ -279,6 +353,10 @@ static gboolean load_artwork(
 
         gtk_widget_hide(
             data->art_placeholder
+        );
+
+        gtk_widget_queue_draw(
+            data->art_image
         );
 
         g_object_unref(scaled);
@@ -311,6 +389,7 @@ static void update_artwork(
         );
 
     if (!art_value) {
+
         clear_artwork(data);
 
         g_clear_pointer(
@@ -380,6 +459,7 @@ static void update_progress(
         );
 
     if (!metadata) {
+
         if (position_value)
             g_variant_unref(position_value);
 
@@ -412,12 +492,14 @@ static void update_progress(
         );
 
     if (length_value) {
+
         gint64 length =
             g_variant_get_int64(
                 length_value
             );
 
         if (length > 0) {
+
             gdouble fraction =
                 (gdouble)position /
                 (gdouble)length;
@@ -491,24 +573,27 @@ static gboolean media_button_draw(
 
 
     /* -----------------------------------------------------
-     * CIRCLE
+     * PLAY BUTTON
      * ----------------------------------------------------- */
 
     if (type == BUTTON_PLAY_PAUSE) {
 
         if (hovered) {
+
             cairo_set_source_rgb(
                 cr,
-                0.88,
-                0.88,
-                0.88
+                0.15,
+                0.95,
+                0.45
             );
+
         } else {
+
             cairo_set_source_rgb(
                 cr,
-                1.0,
-                1.0,
-                1.0
+                0.118,
+                0.843,
+                0.376
             );
         }
 
@@ -527,9 +612,9 @@ static gboolean media_button_draw(
 
             cairo_set_source_rgb(
                 cr,
-                0.19,
-                0.19,
-                0.19
+                0.20,
+                0.20,
+                0.20
             );
 
         } else {
@@ -542,6 +627,7 @@ static gboolean media_button_draw(
             );
         }
     }
+
 
     cairo_arc(
         cr,
@@ -563,9 +649,9 @@ static gboolean media_button_draw(
 
         cairo_set_source_rgb(
             cr,
-            0.063,
-            0.063,
-            0.063
+            0.03,
+            0.03,
+            0.03
         );
 
     } else {
@@ -587,6 +673,7 @@ static gboolean media_button_draw(
         type == BUTTON_PLAY_PAUSE &&
         !data->playing
     ) {
+
         gdouble size = 21.0;
 
         cairo_move_to(
@@ -623,6 +710,7 @@ static gboolean media_button_draw(
         type == BUTTON_PLAY_PAUSE &&
         data->playing
     ) {
+
         gdouble bar_width = 5.0;
         gdouble bar_height = 21.0;
         gdouble gap = 5.0;
@@ -802,7 +890,6 @@ static gboolean media_button_draw(
         return TRUE;
     }
 
-
     return TRUE;
 }
 
@@ -927,7 +1014,6 @@ static gboolean media_button_press(
         );
     }
 
-
     return TRUE;
 }
 
@@ -944,134 +1030,12 @@ static void update_ui(
         return;
 
 
-    GVariant *metadata =
-        get_mpris_property(
-            data,
-            "Metadata"
-        );
-
-
-    if (metadata) {
-
-        /* -------------------------------------------------
-         * TITLE
-         * ------------------------------------------------- */
-
-        GVariant *title_value =
-            g_variant_lookup_value(
-                metadata,
-                "xesam:title",
-                G_VARIANT_TYPE_STRING
-            );
-
-
-        if (title_value) {
-
-            const gchar *title =
-                g_variant_get_string(
-                    title_value,
-                    NULL
-                );
-
-            gtk_label_set_text(
-                GTK_LABEL(data->title_label),
-                title
-            );
-
-            g_variant_unref(
-                title_value
-            );
-
-        } else {
-
-            gtk_label_set_text(
-                GTK_LABEL(data->title_label),
-                "Unknown title"
-            );
-        }
-
-
-        /* -------------------------------------------------
-         * ARTIST
-         * ------------------------------------------------- */
-
-        GVariant *artist_value =
-            g_variant_lookup_value(
-                metadata,
-                "xesam:artist",
-                NULL
-            );
-
-
-        if (
-            artist_value &&
-            g_variant_is_of_type(
-                artist_value,
-                G_VARIANT_TYPE("as")
-            )
-        ) {
-
-            GVariantIter iter;
-
-            const gchar *artist_name = NULL;
-
-            g_variant_iter_init(
-                &iter,
-                artist_value
-            );
-
-            if (
-                g_variant_iter_next(
-                    &iter,
-                    "&s",
-                    &artist_name
-                )
-            ) {
-
-                if (artist_name) {
-
-                    gtk_label_set_text(
-                        GTK_LABEL(
-                            data->artist_label
-                        ),
-                        artist_name
-                    );
-                }
-            }
-
-        } else {
-
-            gtk_label_set_text(
-                GTK_LABEL(data->artist_label),
-                "Unknown artist"
-            );
-        }
-
-
-        if (artist_value)
-            g_variant_unref(
-                artist_value
-            );
-
-
-        /* -------------------------------------------------
-         * ARTWORK
-         * ------------------------------------------------- */
-
-        update_artwork(
-            data,
-            metadata
-        );
-
-
-        g_variant_unref(
-            metadata
-        );
-    }
-
-
     /* -----------------------------------------------------
-     * PLAYBACK STATUS
+     * PLAYBACK STATUS FIRST
+     *
+     * This is important. When Spotify is moved to another
+     * device, spotifyd can remain registered on D-Bus while
+     * no longer being the active playback device.
      * ----------------------------------------------------- */
 
     gchar *status =
@@ -1081,29 +1045,210 @@ static void update_ui(
         );
 
 
-    if (status) {
+    if (!status) {
 
-        data->playing =
-            g_strcmp0(
-                status,
-                "Playing"
-            ) == 0;
+        reset_ui(data);
 
+        return;
+    }
+
+
+    /*
+     * If spotifyd reports Stopped, return to the initial
+     * waiting screen.
+     */
+
+    if (
+        g_strcmp0(
+            status,
+            "Stopped"
+        ) == 0
+    ) {
+
+        g_free(status);
+
+        reset_ui(data);
+
+        return;
+    }
+
+
+    data->playing =
+        g_strcmp0(
+            status,
+            "Playing"
+        ) == 0;
+
+
+    if (
+        g_strcmp0(
+            status,
+            "Playing"
+        ) == 0
+    ) {
 
         gtk_label_set_text(
             GTK_LABEL(data->status_label),
-            status
+            "PLAYING"
+        );
+
+    } else if (
+        g_strcmp0(
+            status,
+            "Paused"
+        ) == 0
+    ) {
+
+        gtk_label_set_text(
+            GTK_LABEL(data->status_label),
+            "PAUSED"
+        );
+
+    } else {
+
+        gtk_label_set_text(
+            GTK_LABEL(data->status_label),
+            "WAITING FOR SPOTIFY"
+        );
+    }
+
+
+    g_free(status);
+
+
+    /* -----------------------------------------------------
+     * METADATA
+     * ----------------------------------------------------- */
+
+    GVariant *metadata =
+        get_mpris_property(
+            data,
+            "Metadata"
         );
 
 
-        if (data->play_button)
-            gtk_widget_queue_draw(
-                data->play_button
+    if (!metadata) {
+
+        reset_ui(data);
+
+        return;
+    }
+
+
+    /* -----------------------------------------------------
+     * TITLE
+     * ----------------------------------------------------- */
+
+    GVariant *title_value =
+        g_variant_lookup_value(
+            metadata,
+            "xesam:title",
+            G_VARIANT_TYPE_STRING
+        );
+
+
+    if (title_value) {
+
+        const gchar *title =
+            g_variant_get_string(
+                title_value,
+                NULL
             );
 
+        gtk_label_set_text(
+            GTK_LABEL(data->title_label),
+            title
+        );
 
-        g_free(status);
+        g_variant_unref(
+            title_value
+        );
+
+    } else {
+
+        gtk_label_set_text(
+            GTK_LABEL(data->title_label),
+            "Waiting for Spotify..."
+        );
     }
+
+
+    /* -----------------------------------------------------
+     * ARTIST
+     * ----------------------------------------------------- */
+
+    GVariant *artist_value =
+        g_variant_lookup_value(
+            metadata,
+            "xesam:artist",
+            NULL
+        );
+
+
+    if (
+        artist_value &&
+        g_variant_is_of_type(
+            artist_value,
+            G_VARIANT_TYPE("as")
+        )
+    ) {
+
+        GVariantIter iter;
+
+        const gchar *artist_name = NULL;
+
+        g_variant_iter_init(
+            &iter,
+            artist_value
+        );
+
+        if (
+            g_variant_iter_next(
+                &iter,
+                "&s",
+                &artist_name
+            )
+        ) {
+
+            if (artist_name) {
+
+                gtk_label_set_text(
+                    GTK_LABEL(
+                        data->artist_label
+                    ),
+                    artist_name
+                );
+            }
+        }
+
+    } else {
+
+        gtk_label_set_text(
+            GTK_LABEL(data->artist_label),
+            ""
+        );
+    }
+
+
+    if (artist_value)
+        g_variant_unref(
+            artist_value
+        );
+
+
+    /* -----------------------------------------------------
+     * ARTWORK
+     * ----------------------------------------------------- */
+
+    update_artwork(
+        data,
+        metadata
+    );
+
+
+    g_variant_unref(
+        metadata
+    );
 
 
     /* -----------------------------------------------------
@@ -1111,6 +1256,16 @@ static void update_ui(
      * ----------------------------------------------------- */
 
     update_progress(data);
+
+
+    /* -----------------------------------------------------
+     * PLAY BUTTON
+     * ----------------------------------------------------- */
+
+    if (data->play_button)
+        gtk_widget_queue_draw(
+            data->play_button
+        );
 }
 
 
@@ -1138,9 +1293,10 @@ static gchar *find_spotifyd_service(
         );
 
 
-    if (error) {
+    if (!bus) {
 
-        g_error_free(error);
+        if (error)
+            g_error_free(error);
 
         return NULL;
     }
@@ -1161,9 +1317,10 @@ static gchar *find_spotifyd_service(
     g_object_unref(bus);
 
 
-    if (error) {
+    if (!result) {
 
-        g_error_free(error);
+        if (error)
+            g_error_free(error);
 
         return NULL;
     }
@@ -1234,13 +1391,27 @@ static gboolean connect_mpris(
         );
 
 
-    if (error) {
+    if (!connection) {
 
-        g_error_free(error);
+        if (error) {
+
+            g_warning(
+                "Failed to connect to system D-Bus: %s",
+                error->message
+            );
+
+            g_error_free(error);
+
+            error = NULL;
+        }
 
         return FALSE;
     }
 
+
+    /* -----------------------------------------------------
+     * FIND SPOTIFYD
+     * ----------------------------------------------------- */
 
     gchar *service =
         find_spotifyd_service(
@@ -1255,6 +1426,10 @@ static gboolean connect_mpris(
         return FALSE;
     }
 
+
+    /* -----------------------------------------------------
+     * REMOVE OLD PROXIES
+     * ----------------------------------------------------- */
 
     if (data->player) {
 
@@ -1276,8 +1451,9 @@ static gboolean connect_mpris(
     }
 
 
-    g_free(
-        data->service_name
+    g_clear_pointer(
+        &data->service_name,
+        g_free
     );
 
 
@@ -1302,11 +1478,23 @@ static gboolean connect_mpris(
         );
 
 
-    if (error) {
+    if (!data->player) {
 
-        g_error_free(error);
+        if (error) {
 
-        data->player = NULL;
+            g_warning(
+                "Failed to create Spotify player proxy: %s",
+                error->message
+            );
+
+            g_error_free(error);
+
+            error = NULL;
+        }
+
+        g_object_unref(connection);
+
+        return FALSE;
     }
 
 
@@ -1327,21 +1515,47 @@ static gboolean connect_mpris(
         );
 
 
-    if (error) {
+    if (!data->properties) {
 
-        g_error_free(error);
+        if (error) {
 
-        data->properties = NULL;
+            g_warning(
+                "Failed to create Spotify properties proxy: %s",
+                error->message
+            );
+
+            g_error_free(error);
+
+            error = NULL;
+        }
+
+
+        g_object_unref(
+            data->player
+        );
+
+        data->player = NULL;
+
+
+        g_object_unref(connection);
+
+        return FALSE;
     }
 
 
     g_object_unref(connection);
 
 
-    return (
-        data->player != NULL &&
-        data->properties != NULL
+    data->reconnect_delay = 1;
+
+
+    gtk_label_set_text(
+        GTK_LABEL(data->status_label),
+        "CONNECTED"
     );
+
+
+    return TRUE;
 }
 
 
@@ -1362,8 +1576,21 @@ static gboolean update_timer(
         !data->properties
     ) {
 
-        if (connect_mpris(data))
+        if (connect_mpris(data)) {
+
             update_ui(data);
+
+            data->reconnect_delay = 1;
+
+        } else {
+
+            if (data->reconnect_delay < 8)
+                data->reconnect_delay *= 2;
+
+            if (data->reconnect_delay > 8)
+                data->reconnect_delay = 8;
+        }
+
 
         return G_SOURCE_CONTINUE;
     }
@@ -1388,23 +1615,24 @@ static void load_css(void)
         "}"
 
         "window {"
-        "  background-color: #101010;"
+        "  background-color: #121212;"
         "}"
 
         ".title {"
         "  color: #ffffff;"
-        "  font-size: 32px;"
-        "  font-weight: 600;"
+        "  font-size: 34px;"
+        "  font-weight: 700;"
         "}"
 
         ".artist {"
-        "  color: #999999;"
-        "  font-size: 24px;"
+        "  color: #b3b3b3;"
+        "  font-size: 22px;"
         "}"
 
         ".status {"
-        "  color: #666666;"
-        "  font-size: 18px;"
+        "  color: #1ed760;"
+        "  font-size: 13px;"
+        "  font-weight: 700;"
         "}"
 
         ".art {"
@@ -1414,21 +1642,21 @@ static void load_css(void)
         "}"
 
         "progressbar {"
-        "  min-height: 5px;"
+        "  min-height: 6px;"
         "}"
 
         "progressbar trough {"
-        "  background-color: #292929;"
+        "  background-color: #4a4a4a;"
         "  border: none;"
         "  border-radius: 4px;"
-        "  min-height: 10px;"
+        "  min-height: 6px;"
         "}"
 
         "progressbar progress {"
-        "  background-color: #ffffff;"
+        "  background-color: #1ed760;"
         "  border: none;"
         "  border-radius: 4px;"
-        "  min-height: 10px;"
+        "  min-height: 6px;"
         "}";
 
 
@@ -1482,6 +1710,9 @@ static void activate(
             AppData,
             1
         );
+
+
+    data->reconnect_delay = 1;
 
 
     /* -----------------------------------------------------
@@ -1558,39 +1789,35 @@ static void activate(
 
 
     /* -----------------------------------------------------
-     * ARTWORK IMAGE
+     * ARTWORK CONTAINER
      * ----------------------------------------------------- */
 
-    GtkWidget *art_image =
-        gtk_image_new();
-
-
-    data->art_image =
-        art_image;
+    GtkWidget *art_overlay =
+        gtk_overlay_new();
 
 
     gtk_widget_set_size_request(
-        art_image,
+        art_overlay,
         260,
         260
     );
 
 
     gtk_widget_set_halign(
-        art_image,
+        art_overlay,
         GTK_ALIGN_CENTER
     );
 
 
     gtk_widget_set_valign(
-        art_image,
+        art_overlay,
         GTK_ALIGN_CENTER
     );
 
 
     gtk_box_pack_start(
         GTK_BOX(art_box),
-        art_image,
+        art_overlay,
         TRUE,
         TRUE,
         0
@@ -1638,12 +1865,51 @@ static void activate(
     );
 
 
-    gtk_box_pack_start(
-        GTK_BOX(art_box),
-        placeholder,
-        TRUE,
-        TRUE,
-        0
+    gtk_overlay_add_overlay(
+        GTK_OVERLAY(art_overlay),
+        placeholder
+    );
+
+
+    /* -----------------------------------------------------
+     * ARTWORK IMAGE
+     * ----------------------------------------------------- */
+
+    GtkWidget *art_image =
+        gtk_image_new();
+
+
+    data->art_image =
+        art_image;
+
+
+    gtk_widget_set_size_request(
+        art_image,
+        260,
+        260
+    );
+
+
+    gtk_widget_set_halign(
+        art_image,
+        GTK_ALIGN_CENTER
+    );
+
+
+    gtk_widget_set_valign(
+        art_image,
+        GTK_ALIGN_CENTER
+    );
+
+
+    gtk_overlay_add_overlay(
+        GTK_OVERLAY(art_overlay),
+        art_image
+    );
+
+
+    gtk_widget_show(
+        placeholder
     );
 
 
@@ -1859,14 +2125,10 @@ static void activate(
     gtk_widget_set_size_request(
         progress,
         -1,
-        5
+        6
     );
 
 
-    /*
-     * Move the controls slightly lower relative
-     * to the progress bar.
-     */
     gtk_widget_set_margin_bottom(
         progress,
         15
@@ -1896,12 +2158,6 @@ static void activate(
     gtk_widget_set_halign(
         controls,
         GTK_ALIGN_CENTER
-    );
-
-
-    gtk_widget_set_margin_top(
-        controls,
-        0
     );
 
 
@@ -2063,23 +2319,7 @@ static void activate(
 
 
     /* -----------------------------------------------------
-     * MPRIS
-     * ----------------------------------------------------- */
-
-    connect_mpris(data);
-
-    update_ui(data);
-
-
-    g_timeout_add_seconds(
-        1,
-        update_timer,
-        data
-    );
-
-
-    /* -----------------------------------------------------
-     * CLEANUP
+     * STORE DATA
      * ----------------------------------------------------- */
 
     g_object_set_data_full(
@@ -2090,13 +2330,57 @@ static void activate(
     );
 
 
-    gtk_widget_show_all(window);
+    /* -----------------------------------------------------
+     * SHOW WINDOW
+     * ----------------------------------------------------- */
+
+    gtk_widget_show_all(
+        window
+    );
 
 
-    if (!data->art_url)
+    /*
+     * Restore initial artwork state after show_all().
+     */
+
+    if (!data->art_url) {
+
         gtk_widget_hide(
             data->art_image
         );
+
+        gtk_widget_show(
+            data->art_placeholder
+        );
+    }
+
+
+    /* -----------------------------------------------------
+     * CONNECT MPRIS
+     * ----------------------------------------------------- */
+
+    if (connect_mpris(data)) {
+
+        update_ui(data);
+
+    } else {
+
+        gtk_label_set_text(
+            GTK_LABEL(data->status_label),
+            "WAITING FOR SPOTIFY"
+        );
+    }
+
+
+    /* -----------------------------------------------------
+     * UPDATE EVERY SECOND
+     * ----------------------------------------------------- */
+
+    g_timeout_add_seconds(
+        1,
+        update_timer,
+        data
+    );
 }
 
 
