@@ -75,6 +75,7 @@ static GVariant *get_mpris_property(
         );
 
     if (!result) {
+
         if (error)
             g_error_free(error);
 
@@ -82,8 +83,10 @@ static GVariant *get_mpris_property(
     }
 
     if (error) {
+
         g_error_free(error);
         g_variant_unref(result);
+
         return NULL;
     }
 
@@ -127,6 +130,7 @@ static gchar *get_string_property(
             G_VARIANT_TYPE_STRING
         )
     ) {
+
         result =
             g_variant_dup_string(
                 value,
@@ -149,6 +153,7 @@ static void clear_artwork(
 )
 {
     if (data->art_image) {
+
         gtk_image_clear(
             GTK_IMAGE(data->art_image)
         );
@@ -169,7 +174,7 @@ static void clear_artwork(
  * RESET UI
  *
  * Used when spotifyd is no longer the active playback
- * device.
+ * device, or when a new spotifyd MPRIS instance appears.
  * ========================================================= */
 
 static void reset_ui(
@@ -261,6 +266,7 @@ static gboolean load_artwork(
     g_free(output_file);
 
     if (!spawned) {
+
         if (error)
             g_error_free(error);
 
@@ -268,7 +274,9 @@ static gboolean load_artwork(
     }
 
     if (error) {
+
         g_error_free(error);
+
         return FALSE;
     }
 
@@ -284,6 +292,7 @@ static gboolean load_artwork(
         );
 
     if (!original) {
+
         if (pixbuf_error)
             g_error_free(pixbuf_error);
 
@@ -319,7 +328,9 @@ static gboolean load_artwork(
         );
 
     if (!cropped) {
+
         g_object_unref(original);
+
         return FALSE;
     }
 
@@ -413,7 +424,9 @@ static void update_artwork(
             url
         ) == 0
     ) {
+
         g_variant_unref(art_value);
+
         return;
     }
 
@@ -475,6 +488,7 @@ static void update_progress(
             G_VARIANT_TYPE_INT64
         )
     ) {
+
         position =
             g_variant_get_int64(
                 position_value
@@ -527,6 +541,10 @@ static void update_progress(
 
 /* =========================================================
  * DRAW MEDIA BUTTON
+ *
+ * The control is a real GtkButton.
+ * This function only draws the circular background
+ * and the icon.
  * ========================================================= */
 
 static gboolean media_button_draw(
@@ -564,21 +582,30 @@ static gboolean media_button_draw(
         height / 2.0;
 
     gboolean hovered =
-        gtk_widget_get_state_flags(widget) &
-        GTK_STATE_FLAG_PRELIGHT;
+        (gtk_widget_get_state_flags(widget) &
+         GTK_STATE_FLAG_PRELIGHT) != 0;
 
     gboolean active =
-        gtk_widget_get_state_flags(widget) &
-        GTK_STATE_FLAG_ACTIVE;
+        (gtk_widget_get_state_flags(widget) &
+         GTK_STATE_FLAG_ACTIVE) != 0;
 
 
     /* -----------------------------------------------------
-     * PLAY BUTTON
+     * BUTTON BACKGROUND
      * ----------------------------------------------------- */
 
     if (type == BUTTON_PLAY_PAUSE) {
 
-        if (hovered) {
+        if (active) {
+
+            cairo_set_source_rgb(
+                cr,
+                0.10,
+                0.70,
+                0.30
+            );
+
+        } else if (hovered) {
 
             cairo_set_source_rgb(
                 cr,
@@ -628,6 +655,10 @@ static gboolean media_button_draw(
         }
     }
 
+
+    /* -----------------------------------------------------
+     * CIRCLE
+     * ----------------------------------------------------- */
 
     cairo_arc(
         cr,
@@ -895,6 +926,143 @@ static gboolean media_button_draw(
 
 
 /* =========================================================
+ * BUTTON CLICK
+ * ========================================================= */
+
+static void media_button_clicked(
+    GtkButton *button,
+    gpointer user_data
+)
+{
+    (void)button;
+
+    MediaButtonData *button_data =
+        user_data;
+
+    AppData *data =
+        button_data->data;
+
+    if (!data->player) {
+
+        g_message(
+            "BUTTON CLICKED but no MPRIS player is connected"
+        );
+
+        return;
+    }
+
+
+    /* -----------------------------------------------------
+     * PREVIOUS
+     * ----------------------------------------------------- */
+
+    if (
+        button_data->type ==
+        BUTTON_PREVIOUS
+    ) {
+
+        g_message(
+            "BUTTON CLICKED: Previous"
+        );
+
+        GError *error = NULL;
+
+        g_dbus_proxy_call_sync(
+            data->player,
+            "Previous",
+            NULL,
+            G_DBUS_CALL_FLAGS_NONE,
+            1000,
+            NULL,
+            &error
+        );
+
+        if (error) {
+
+            g_warning(
+                "MPRIS Previous failed: %s",
+                error->message
+            );
+
+            g_error_free(error);
+        }
+
+
+    /* -----------------------------------------------------
+     * PLAY / PAUSE
+     * ----------------------------------------------------- */
+
+    } else if (
+        button_data->type ==
+        BUTTON_PLAY_PAUSE
+    ) {
+
+        g_message(
+            "BUTTON CLICKED: PlayPause"
+        );
+
+        GError *error = NULL;
+
+        g_dbus_proxy_call_sync(
+            data->player,
+            "PlayPause",
+            NULL,
+            G_DBUS_CALL_FLAGS_NONE,
+            1000,
+            NULL,
+            &error
+        );
+
+        if (error) {
+
+            g_warning(
+                "MPRIS PlayPause failed: %s",
+                error->message
+            );
+
+            g_error_free(error);
+        }
+
+
+    /* -----------------------------------------------------
+     * NEXT
+     * ----------------------------------------------------- */
+
+    } else if (
+        button_data->type ==
+        BUTTON_NEXT
+    ) {
+
+        g_message(
+            "BUTTON CLICKED: Next"
+        );
+
+        GError *error = NULL;
+
+        g_dbus_proxy_call_sync(
+            data->player,
+            "Next",
+            NULL,
+            G_DBUS_CALL_FLAGS_NONE,
+            1000,
+            NULL,
+            &error
+        );
+
+        if (error) {
+
+            g_warning(
+                "MPRIS Next failed: %s",
+                error->message
+            );
+
+            g_error_free(error);
+        }
+    }
+}
+
+
+/* =========================================================
  * CREATE MEDIA BUTTON
  * ========================================================= */
 
@@ -904,21 +1072,86 @@ static GtkWidget *create_media_button(
     gint size
 )
 {
-    GtkWidget *drawing_area =
-        gtk_drawing_area_new();
+    GtkWidget *button =
+        gtk_button_new();
 
     gtk_widget_set_size_request(
-        drawing_area,
+        button,
         size,
         size
     );
 
-    gtk_widget_set_events(
-        drawing_area,
-        GDK_BUTTON_PRESS_MASK |
-        GDK_ENTER_NOTIFY_MASK |
-        GDK_LEAVE_NOTIFY_MASK
+    gtk_button_set_relief(
+        GTK_BUTTON(button),
+        GTK_RELIEF_NONE
     );
+
+    gtk_widget_set_focus_on_click(
+        button,
+        FALSE
+    );
+
+    gtk_widget_set_can_focus(
+        button,
+        FALSE
+    );
+
+    gtk_widget_set_halign(
+        button,
+        GTK_ALIGN_CENTER
+    );
+
+    gtk_widget_set_valign(
+        button,
+        GTK_ALIGN_CENTER
+    );
+
+
+    /* -----------------------------------------------------
+     * TOOLTIP / IDENTIFICATION
+     * ----------------------------------------------------- */
+
+    if (type == BUTTON_PREVIOUS) {
+
+        gtk_widget_set_name(
+            button,
+            "previous-button"
+        );
+
+        gtk_widget_set_tooltip_text(
+            button,
+            "Previous"
+        );
+
+    } else if (type == BUTTON_PLAY_PAUSE) {
+
+        gtk_widget_set_name(
+            button,
+            "play-pause-button"
+        );
+
+        gtk_widget_set_tooltip_text(
+            button,
+            "Play / Pause"
+        );
+
+    } else {
+
+        gtk_widget_set_name(
+            button,
+            "next-button"
+        );
+
+        gtk_widget_set_tooltip_text(
+            button,
+            "Next"
+        );
+    }
+
+
+    /* -----------------------------------------------------
+     * BUTTON DATA
+     * ----------------------------------------------------- */
 
     MediaButtonData *button_data =
         g_new0(
@@ -932,89 +1165,34 @@ static GtkWidget *create_media_button(
     button_data->data =
         data;
 
-    g_signal_connect_data(
-        drawing_area,
+
+    /* -----------------------------------------------------
+     * DRAW
+     * ----------------------------------------------------- */
+
+    g_signal_connect(
+        button,
         "draw",
         G_CALLBACK(media_button_draw),
+        button_data
+    );
+
+
+    /* -----------------------------------------------------
+     * CLICKED
+     * ----------------------------------------------------- */
+
+    g_signal_connect_data(
+        button,
+        "clicked",
+        G_CALLBACK(media_button_clicked),
         button_data,
         (GClosureNotify)g_free,
         0
     );
 
-    return drawing_area;
-}
 
-
-/* =========================================================
- * BUTTON PRESS
- * ========================================================= */
-
-static gboolean media_button_press(
-    GtkWidget *widget,
-    GdkEventButton *event,
-    gpointer user_data
-)
-{
-    (void)widget;
-    (void)event;
-
-    MediaButtonData *button_data =
-        user_data;
-
-    AppData *data =
-        button_data->data;
-
-    if (!data->player)
-        return TRUE;
-
-
-    if (
-        button_data->type ==
-        BUTTON_PREVIOUS
-    ) {
-
-        g_dbus_proxy_call_sync(
-            data->player,
-            "Previous",
-            NULL,
-            G_DBUS_CALL_FLAGS_NONE,
-            1000,
-            NULL,
-            NULL
-        );
-
-    } else if (
-        button_data->type ==
-        BUTTON_PLAY_PAUSE
-    ) {
-
-        g_dbus_proxy_call_sync(
-            data->player,
-            "PlayPause",
-            NULL,
-            G_DBUS_CALL_FLAGS_NONE,
-            1000,
-            NULL,
-            NULL
-        );
-
-    } else if (
-        button_data->type ==
-        BUTTON_NEXT
-    ) {
-
-        g_dbus_proxy_call_sync(
-            data->player,
-            "Next",
-            NULL,
-            G_DBUS_CALL_FLAGS_NONE,
-            1000,
-            NULL,
-            NULL
-        );
-    }
-
-    return TRUE;
+    return button;
 }
 
 
@@ -1032,10 +1210,6 @@ static void update_ui(
 
     /* -----------------------------------------------------
      * PLAYBACK STATUS FIRST
-     *
-     * This is important. When Spotify is moved to another
-     * device, spotifyd can remain registered on D-Bus while
-     * no longer being the active playback device.
      * ----------------------------------------------------- */
 
     gchar *status =
@@ -1052,11 +1226,6 @@ static void update_ui(
         return;
     }
 
-
-    /*
-     * If spotifyd reports Stopped, return to the initial
-     * waiting screen.
-     */
 
     if (
         g_strcmp0(
@@ -1271,6 +1440,13 @@ static void update_ui(
 
 /* =========================================================
  * FIND SPOTIFYD SERVICE
+ *
+ * Finds the actual MPRIS name, e.g.
+ *
+ * org.mpris.MediaPlayer2.spotifyd.instance1398
+ *
+ * The instance number is dynamic and can change after
+ * spotifyd restarts.
  * ========================================================= */
 
 static gchar *find_spotifyd_service(
@@ -1373,6 +1549,44 @@ static gchar *find_spotifyd_service(
 
 
 /* =========================================================
+ * DISCONNECT MPRIS
+ *
+ * Removes the old proxies when spotifyd restarts or when
+ * a new MPRIS instance is detected.
+ * ========================================================= */
+
+static void disconnect_mpris(
+    AppData *data
+)
+{
+    if (data->player) {
+
+        g_object_unref(
+            data->player
+        );
+
+        data->player = NULL;
+    }
+
+
+    if (data->properties) {
+
+        g_object_unref(
+            data->properties
+        );
+
+        data->properties = NULL;
+    }
+
+
+    g_clear_pointer(
+        &data->service_name,
+        g_free
+    );
+}
+
+
+/* =========================================================
  * CONNECT MPRIS
  * ========================================================= */
 
@@ -1410,7 +1624,7 @@ static gboolean connect_mpris(
 
 
     /* -----------------------------------------------------
-     * FIND SPOTIFYD
+     * FIND CURRENT SPOTIFYD INSTANCE
      * ----------------------------------------------------- */
 
     gchar *service =
@@ -1424,6 +1638,50 @@ static gboolean connect_mpris(
         g_object_unref(connection);
 
         return FALSE;
+    }
+
+
+    /* -----------------------------------------------------
+     * ALREADY CONNECTED TO THIS INSTANCE
+     * ----------------------------------------------------- */
+
+    if (
+        data->player &&
+        data->properties &&
+        data->service_name &&
+        g_strcmp0(
+            data->service_name,
+            service
+        ) == 0
+    ) {
+
+        g_free(service);
+
+        g_object_unref(connection);
+
+        return TRUE;
+    }
+
+
+    /* -----------------------------------------------------
+     * INSTANCE CHANGED
+     * ----------------------------------------------------- */
+
+    if (
+        data->service_name &&
+        g_strcmp0(
+            data->service_name,
+            service
+        ) != 0
+    ) {
+
+        g_message(
+            "Spotifyd MPRIS instance changed: %s -> %s",
+            data->service_name,
+            service
+        );
+
+        reset_ui(data);
     }
 
 
@@ -1492,6 +1750,11 @@ static gboolean connect_mpris(
             error = NULL;
         }
 
+        g_clear_pointer(
+            &data->service_name,
+            g_free
+        );
+
         g_object_unref(connection);
 
         return FALSE;
@@ -1537,6 +1800,12 @@ static gboolean connect_mpris(
         data->player = NULL;
 
 
+        g_clear_pointer(
+            &data->service_name,
+            g_free
+        );
+
+
         g_object_unref(connection);
 
         return FALSE;
@@ -1555,12 +1824,34 @@ static gboolean connect_mpris(
     );
 
 
+    g_message(
+        "Connected to Spotifyd MPRIS: %s",
+        data->service_name
+    );
+
+
     return TRUE;
 }
 
 
 /* =========================================================
  * UPDATE TIMER
+ *
+ * This is the important part.
+ *
+ * Every second we check which spotifyd MPRIS instance
+ * currently exists.
+ *
+ * Example:
+ *
+ * instance1398
+ *      |
+ *      | spotifyd restart
+ *      v
+ * instance1427
+ *
+ * The UI automatically disconnects from instance1398
+ * and connects to instance1427.
  * ========================================================= */
 
 static gboolean update_timer(
@@ -1571,30 +1862,128 @@ static gboolean update_timer(
         user_data;
 
 
+    GDBusConnection *connection =
+        g_bus_get_sync(
+            G_BUS_TYPE_SYSTEM,
+            NULL,
+            NULL
+        );
+
+
+    if (!connection) {
+
+        if (data->player || data->properties) {
+
+            disconnect_mpris(data);
+
+            reset_ui(data);
+        }
+
+        return G_SOURCE_CONTINUE;
+    }
+
+
+    /* -----------------------------------------------------
+     * FIND CURRENT INSTANCE
+     * ----------------------------------------------------- */
+
+    gchar *current_service =
+        find_spotifyd_service(
+            connection
+        );
+
+
+    g_object_unref(connection);
+
+
+    /* -----------------------------------------------------
+     * NO SPOTIFYD
+     * ----------------------------------------------------- */
+
+    if (!current_service) {
+
+        if (
+            data->player ||
+            data->properties ||
+            data->service_name
+        ) {
+
+            g_message(
+                "Spotifyd MPRIS service disappeared"
+            );
+
+            disconnect_mpris(data);
+
+            reset_ui(data);
+        }
+
+        return G_SOURCE_CONTINUE;
+    }
+
+
+    /* -----------------------------------------------------
+     * INSTANCE CHANGED
+     * ----------------------------------------------------- */
+
+    if (
+        !data->service_name ||
+        g_strcmp0(
+            data->service_name,
+            current_service
+        ) != 0
+    ) {
+
+        g_message(
+            "Detected new Spotifyd MPRIS instance: %s",
+            current_service
+        );
+
+
+        /*
+         * Reset first so old song information never remains
+         * visible while reconnecting.
+         */
+
+        reset_ui(data);
+
+
+        /*
+         * connect_mpris() will rediscover the same
+         * current_service and create new proxies.
+         */
+
+        disconnect_mpris(data);
+
+
+        if (!connect_mpris(data)) {
+
+            g_free(current_service);
+
+            return G_SOURCE_CONTINUE;
+        }
+    }
+
+
+    g_free(current_service);
+
+
+    /* -----------------------------------------------------
+     * NO PROXY
+     * ----------------------------------------------------- */
+
     if (
         !data->player ||
         !data->properties
     ) {
 
-        if (connect_mpris(data)) {
-
-            update_ui(data);
-
-            data->reconnect_delay = 1;
-
-        } else {
-
-            if (data->reconnect_delay < 8)
-                data->reconnect_delay *= 2;
-
-            if (data->reconnect_delay > 8)
-                data->reconnect_delay = 8;
-        }
-
-
-        return G_SOURCE_CONTINUE;
+        if (!connect_mpris(data))
+            return G_SOURCE_CONTINUE;
     }
 
+
+    /* -----------------------------------------------------
+     * UPDATE UI
+     * ----------------------------------------------------- */
 
     update_ui(data);
 
@@ -2188,31 +2577,6 @@ static void activate(
         );
 
 
-    MediaButtonData *previous_data =
-        g_new0(
-            MediaButtonData,
-            1
-        );
-
-
-    previous_data->type =
-        BUTTON_PREVIOUS;
-
-
-    previous_data->data =
-        data;
-
-
-    g_signal_connect_data(
-        previous,
-        "button-press-event",
-        G_CALLBACK(media_button_press),
-        previous_data,
-        (GClosureNotify)g_free,
-        0
-    );
-
-
     gtk_box_pack_start(
         GTK_BOX(controls),
         previous,
@@ -2238,31 +2602,6 @@ static void activate(
         play;
 
 
-    MediaButtonData *play_data =
-        g_new0(
-            MediaButtonData,
-            1
-        );
-
-
-    play_data->type =
-        BUTTON_PLAY_PAUSE;
-
-
-    play_data->data =
-        data;
-
-
-    g_signal_connect_data(
-        play,
-        "button-press-event",
-        G_CALLBACK(media_button_press),
-        play_data,
-        (GClosureNotify)g_free,
-        0
-    );
-
-
     gtk_box_pack_start(
         GTK_BOX(controls),
         play,
@@ -2282,31 +2621,6 @@ static void activate(
             data,
             64
         );
-
-
-    MediaButtonData *next_data =
-        g_new0(
-            MediaButtonData,
-            1
-        );
-
-
-    next_data->type =
-        BUTTON_NEXT;
-
-
-    next_data->data =
-        data;
-
-
-    g_signal_connect_data(
-        next,
-        "button-press-event",
-        G_CALLBACK(media_button_press),
-        next_data,
-        (GClosureNotify)g_free,
-        0
-    );
 
 
     gtk_box_pack_start(
