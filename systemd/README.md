@@ -7,11 +7,13 @@ The setup consists of:
 * **spotifyd** — Spotify Connect daemon, outputting audio through ALSA `hw:0,0`
 * **spotify-ui** — GTK3 graphical interface running under the Weston Wayland session
 
-## Spotifyd Service
+---
+
+# Spotifyd Service
 
 The Spotifyd service starts `spotifyd` at boot and outputs audio through the board's ALSA device `hw:0,0`.
 
-### Installation
+## Installation
 
 Make sure the spotifyd binary is located at:
 
@@ -43,7 +45,7 @@ Start it:
 systemctl start spotifyd.service
 ```
 
-### Check status
+## Check status
 
 ```bash
 systemctl status spotifyd.service
@@ -55,7 +57,7 @@ View logs:
 journalctl -u spotifyd.service -f
 ```
 
-### Stop / Disable
+## Stop / Disable
 
 Stop the service:
 
@@ -69,7 +71,7 @@ Disable automatic startup:
 systemctl disable spotifyd.service
 ```
 
-### Service configuration
+## Service configuration
 
 The service runs:
 
@@ -123,6 +125,76 @@ with the Wayland socket:
 
 Therefore the GTK application runs as the `weston` user.
 
+---
+
+## D-Bus Configuration
+
+Spotifyd exposes its MPRIS interface on the **system D-Bus** because it is started with:
+
+```text
+--use-mpris
+--dbus-type system
+```
+
+Spotifyd's D-Bus configuration is located at:
+
+```text
+/etc/dbus-1/system.d/spotifyd.conf
+```
+
+The Spotifyd policy allows the `root` user to own and communicate with the Spotifyd MPRIS service.
+
+However, the GTK UI runs as the `weston` user, not as `root`. Therefore an additional D-Bus policy is required to allow the UI to send MPRIS commands to Spotifyd.
+
+The additional policy is:
+
+```text
+/etc/dbus-1/system.d/spotify-ui.conf
+```
+
+with:
+
+```xml
+<!DOCTYPE busconfig PUBLIC
+ "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <policy user="weston">
+    <allow send_destination_prefix="org.mpris.MediaPlayer2.spotifyd"/>
+  </policy>
+</busconfig>
+```
+
+This gives the `weston` user permission to send messages to Spotifyd's MPRIS services without running the entire GTK application as root.
+
+This is required for the UI controls such as:
+
+```text
+Previous
+Play / Pause
+Next
+```
+
+to work through MPRIS.
+
+After changing the D-Bus configuration, restart the relevant services:
+
+```bash
+systemctl restart dbus
+```
+
+```bash
+systemctl restart spotifyd.service
+```
+
+```bash
+systemctl restart spotify-ui.service
+```
+
+The UI dynamically discovers the currently running Spotifyd MPRIS instance, so it continues to work even when Spotifyd receives a new dynamic D-Bus service name after restarting.
+
+---
+
 ## Installation
 
 The compiled UI binary is installed at:
@@ -152,7 +224,7 @@ and starts:
 /usr/bin/spotify-ui
 ```
 
-### Service configuration
+## Service configuration
 
 The service starts after the Weston graphical session and Spotifyd:
 
@@ -179,7 +251,9 @@ WantedBy=multi-user.target
 
 `User=` and `Group=` are used so the GTK application runs inside the Weston user's graphical environment. Systemd supports specifying the user/group identity for system services this way.
 
-### Reload systemd
+---
+
+## Reload systemd
 
 ```bash
 systemctl daemon-reload
@@ -197,7 +271,7 @@ Start it:
 systemctl start spotify-ui.service
 ```
 
-### Check status
+## Check status
 
 ```bash
 systemctl status spotify-ui.service
@@ -209,7 +283,7 @@ View logs:
 journalctl -u spotify-ui.service -f
 ```
 
-### Stop / Disable
+## Stop / Disable
 
 Stop the UI:
 
@@ -223,6 +297,8 @@ Disable automatic startup:
 systemctl disable spotify-ui.service
 ```
 
+---
+
 ## Testing the UI manually
 
 The UI can be tested as the Weston user with:
@@ -233,7 +309,9 @@ su -s /bin/sh weston -c 'WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/100
 
 This verifies that the application can access the Weston Wayland display before running it through systemd.
 
-## Startup sequence
+---
+
+# Startup sequence
 
 After boot, the intended sequence is:
 
@@ -241,13 +319,18 @@ After boot, the intended sequence is:
 System boot
     │
     ├── spotifyd.service
-    │       └── Spotify Connect + ALSA audio
+    │       │
+    │       ├── Spotify Connect
+    │       ├── ALSA hw:0,0
+    │       └── MPRIS / system D-Bus
     │
     └── weston-graphical-session.service
             │
             └── spotify-ui.service
                     │
-                    └── GTK3 Spotify interface
+                    ├── GTK3 / Wayland
+                    ├── MPRIS controls
+                    └── Spotify playback information
 ```
 
 The UI is designed to tolerate Spotifyd becoming available after the UI starts because it periodically reconnects to the MPRIS service.
