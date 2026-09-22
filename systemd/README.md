@@ -336,3 +336,111 @@ System boot
 The UI is designed to tolerate Spotifyd becoming available after the UI starts because it periodically reconnects to the MPRIS service.
 
 The systemd service explicitly provides the graphical environment variables because system services do not automatically inherit the complete graphical-session environment.
+
+# Network / Boot Optimization
+
+The STM32MP157F-DK2 has multiple network interfaces:
+
+```text
+wlan0  — Wi-Fi
+end0   — Ethernet
+usb0   — USB gadget
+```
+
+The default `systemd-networkd-wait-online.service` can wait for interfaces that are not connected. On this board, this can cause a long delay during boot because `end0` and `usb0` may remain in a `no-carrier` / `configuring` state even when Wi-Fi is already working.
+
+For this setup, either Wi-Fi or Ethernet is acceptable. Therefore, the wait-online service is configured to continue as soon as **any network interface becomes online**, instead of waiting for all managed interfaces.
+
+The customization is implemented as a systemd drop-in:
+
+```text
+/etc/systemd/system/systemd-networkd-wait-online.service.d/any-network.conf
+```
+
+with:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any
+```
+
+The empty `ExecStart=` removes the default command, and the second `ExecStart=` replaces it with the same program using `--any`.
+
+This means:
+
+```text
+Wi-Fi becomes routable
+        OR
+Ethernet becomes routable
+        ↓
+network-online.target is satisfied
+        ↓
+services depending on network-online.target can start
+```
+
+An unconnected interface such as `usb0` does not hold up the boot.
+
+## Installation
+
+Create the drop-in directory on the target:
+
+```bash
+ssh root@192.168.1.133 'mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d'
+```
+
+Copy the configuration file from the development PC:
+
+```bash
+scp systemd/system/systemd-networkd-wait-online.service.d/any-network.conf root@192.168.1.133:/etc/systemd/system/systemd-networkd-wait-online.service.d/
+```
+
+Reload systemd:
+
+```bash
+ssh root@192.168.1.133 'systemctl daemon-reload'
+```
+
+Verify the effective configuration:
+
+```bash
+ssh root@192.168.1.133 'systemctl cat systemd-networkd-wait-online.service'
+```
+
+The output should include:
+
+```ini
+# /etc/systemd/system/systemd-networkd-wait-online.service.d/any-network.conf
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any
+```
+
+The service can then be tested without rebooting:
+
+```bash
+ssh root@192.168.1.133 'systemctl restart systemd-networkd-wait-online.service'
+```
+
+Check its status:
+
+```bash
+ssh root@192.168.1.133 'systemctl status systemd-networkd-wait-online.service --no-pager -l'
+```
+
+After rebooting, boot time can be measured with:
+
+```bash
+systemd-analyze
+```
+
+The `--any` option is particularly useful for this device because the network connection may be provided either by Wi-Fi or by Ethernet. It avoids the approximately two-minute `systemd-networkd-wait-online` timeout that can occur when an unused interface remains without carrier.
+
+The `spotifyd.service` dependency on `network-online.target` can remain unchanged:
+
+```ini
+After=network-online.target sound.target
+Wants=network-online.target
+```
+
+This preserves the intended behavior of starting Spotifyd after a usable network connection is available, regardless of whether the connection is Wi-Fi or Ethernet.
